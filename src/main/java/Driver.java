@@ -409,10 +409,20 @@ public class Driver {
 			buildHashMap(sc, mapWordToDocID, mapDocIDToWord, initialRDD);
 		}
 		JavaRDD<String> resultDocIDRDD = booleanSearch(mapWordToDocID,searchString).cache();
-		
-		JavaPairRDD<String,String> articles = sc.textFile(getWikiFilesPwd(getWikiFileNames(sc,getDocIDList(resultDocIDRDD)))).mapToPair(tuple -> {
-			String docline[] = tuple.split(",");
-			return new Tuple2<String,String>(docline[0], tuple);
+		List<String> docIDList = getDocIDList(resultDocIDRDD);
+		List<String> wikiFileNames = getWikiFileNames(sc,docIDList);
+		String filesPwd = getWikiFilesPwd(wikiFileNames);
+		JavaRDD<String> tmp = sc.textFile(filesPwd);
+		JavaPairRDD<String,String> articles = tmp.mapToPair(s -> {
+			//String docline[] = tuple.split(",");
+			String docId = "";
+			for(int i = 0; i < s.length(); i++) {
+				if(s.charAt(i) == ',') {
+					docId = s.substring(0, i).trim();
+					break;
+				}
+			}
+			return new Tuple2<String,String>(docId, s);
 		});
 		List<String[]> res = new ArrayList<>();//web infos
 		List<String> ids = new ArrayList<>();
