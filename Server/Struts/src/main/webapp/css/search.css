@@ -1,0 +1,59 @@
+.navbar {
+    
+}
+
+
+.logout {
+    font-weight: 500;
+    font-size: 20px;
+    border: none;
+    top: 32px;
+    color: #23527c;
+
+}
+.userinfo {
+    font-weight: 500;
+    border: none;
+    font-size: 20px;
+    top: 32px;
+    color: #23527c;
+}
+.searchArea {
+    top: 130px;
+
+}
+
+.logo {
+    top:110px;
+    font-size: 70px;
+}
+
+.input-group-addon {
+    padding: 0px 12px;
+    font-size: 14px;
+    font-weight: normal;
+    line-height: 1;
+    color: #555;
+    text-align: center;
+    background-color: white;
+    border: none;
+    border-radius: 4px;
+}
+.search-options {
+    margin-top:30px;
+
+}
+.power-search {
+    top: 30px;
+
+}
+
+#power-search-button {
+    background-color:white;
+    color: black
+
+}
+
+#search {
+    height: 45px;
+}
