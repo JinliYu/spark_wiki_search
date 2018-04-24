@@ -8,6 +8,8 @@ import org.apache.spark.util.AccumulatorV2;
 
 import scala.Tuple2;
 
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
@@ -33,9 +35,11 @@ import org.apache.lucene.search.highlight.TokenSources;
 import org.apache.lucene.store.RAMDirectory;
 
 import java.io.BufferedReader;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 
 public class Driver {
 	public static void main(String args[]) {
@@ -113,13 +117,36 @@ public class Driver {
 		JavaRDD<String> result = null;
 		switch(operator) {
 		case "and":
-			result = operand2.intersection(operand2);
+			if(operand2!=null&&!operand2.isEmpty()) {
+				result = operand2.intersection(operand1);
+			}
+			else {
+				result = operand2;
+			}
 			break;
 		case "or":
-			result = operand2.union(operand1);
+			if(operand1==null||operand1.isEmpty()) {
+				result = operand2;
+			}
+			else if(operand2==null||operand2.isEmpty()) {
+				result = operand1;
+			}
+			else {
+				result = operand2.union(operand1);
+			}
 			break;
 		case "and not":
-			result = operand2.subtract(operand1);
+			if(operand2!=null&&!operand2.isEmpty()) {
+				if(operand1!=null) {
+					result = operand2.subtract(operand1);
+				}
+				else {
+					result = operand2;
+				}
+			}
+			else {
+				result = operand2;
+			}
 			break;
 		default:
 		}
@@ -158,7 +185,7 @@ public class Driver {
 		return result.toArray(new String[result.size()]);
 	}
 
-	public static String webInfo(String line, String keywords) {
+	public static String[] webInfo(String line, String keywords) {
 		String[] docline = line.split(",");
 		String docID = docline[0];
 		String docURL = docline[1];
@@ -167,13 +194,15 @@ public class Driver {
 
 		String titleSnippet = textSnippet(title, keywords);
 		String contentSnippet = textSnippet(content, keywords);
-
+		if(titleSnippet.equals("")) {
+			titleSnippet = title;
+		}
 		String info[] = new String[4];
-//		info[0] = docID;
-//		info[1] = docURL;
-//		info[2] = titleSnippet;
-//		info[3] = contentSnippet;
-		return docID+" | "+docURL+" | "+titleSnippet+" | "+contentSnippet;
+		info[0] = docID;
+		info[1] = docURL;
+		info[2] = titleSnippet;
+		info[3] = contentSnippet;
+		return info;
 
 	}
 
@@ -285,40 +314,155 @@ public class Driver {
 		JavaRDD<String> result = invertedIndexRDD.filter(s -> {
 			String[] tmp = s.split("\\s+");
             return (keyWords.contains(tmp[0]));
-		}).cache();
+		});
 		return result;
 	}
-	
-	public static void buildHashMap(JavaSparkContext sc, HashMap<String,JavaRDD<String>> mapWordToDocID, HashMap<String,List<String>> mapDocIDToWord, JavaRDD<String> initialRDD) {
+	public static void buildHashMap(JavaSparkContext sc, HashMap<String,JavaRDD<String>> mapWordToDocID, JavaRDD<String> initialRDD) {
 		initialRDD.collect().forEach(s -> {
 			String[] line = s.split("\\s+");
 			String word = line[0];
 			List<String> docIDList = new ArrayList(Arrays.asList(line));
 			docIDList.remove(0);
 			mapWordToDocID.put(word, sc.parallelize(docIDList));
-			Iterator<String> it = docIDList.iterator();
-			while(it.hasNext()) {
-				String docID = it.next();
-				if(!mapDocIDToWord.containsKey(docID)) {
-					mapDocIDToWord.put(docID, new ArrayList<String>(Arrays.asList(word)));
-				}
-				else {
-					mapDocIDToWord.get(docID).add(word);
-				}
-			}
 		});
 	}
+//	public static void buildHashMap(JavaSparkContext sc, HashMap<String,JavaRDD<String>> mapWordToDocID, HashMap<String,List<String>> mapDocIDToWord, JavaRDD<String> initialRDD) {
+//		initialRDD.collect().forEach(s -> {
+//			String[] line = s.split("\\s+");
+//			String word = line[0];
+//			List<String> docIDList = new ArrayList(Arrays.asList(line));
+//			docIDList.remove(0);
+//			mapWordToDocID.put(word, sc.parallelize(docIDList));
+//			Iterator<String> it = docIDList.iterator();
+//			while(it.hasNext()) {
+//				String docID = it.next();
+//				if(!mapDocIDToWord.containsKey(docID)) {
+//					mapDocIDToWord.put(docID, new ArrayList<String>(Arrays.asList(word)));
+//				}
+//				else {
+//					mapDocIDToWord.get(docID).add(word);
+//				}
+//			}
+//		});
+//	}
 	
 	public static String getWikiFilesPwd(List<String> fileNames) {
 		StringBuilder sb = new StringBuilder();
 		Iterator<String> it = fileNames.iterator();
 		while(it.hasNext()) {
-			sb.append("/data/wiki_csv/"+it.next());
+			sb.append("/user/cs132g2/splitted_wiki_csv/"+it.next());
 			if(it.hasNext()) {
 				sb.append(",");
 			}
 		}
 		return sb.toString();
+	}
+	public static List<String[]> getWikiContent(JavaSparkContext context, List<Integer> docID, String keyWords) {
+		List<String[]> result = new ArrayList();
+		System.out.println("in getWikiContent");
+		BufferedReader br= null;
+		Collections.sort(docID);
+		 try {
+        Path pt=new Path("hdfs:///user/cs132g2/splitted_wiki_ranges.csv");
+        FileSystem fs = FileSystem.get(context.hadoopConfiguration());
+        br=new BufferedReader(new InputStreamReader(fs.open(pt)));
+       
+        	  String line;
+        	  line=br.readLine();
+        	  int index = 0;
+        	  while (line != null){
+        		  //System.out.println("range file line:"+line);
+                  String[] range = line.split(",");
+                  int begin = Integer.parseInt(range[1]);
+          			int end = Integer.parseInt(range[2]);
+          			List<Integer> docIDinFile = new ArrayList();
+          			for(int i = index; i < docID.size(); i++) {
+          				int docId = docID.get(i);
+//          				System.out.print("docId:"+docId+",");
+//          				System.out.print("begin:"+begin+",");
+//          				System.out.print("end:"+end);
+//          				System.out.println("");
+              			if(docId >= begin && docId <= end) {
+              				docIDinFile.add(docId);
+              			}
+              			else {
+              				index = i;
+              				break;
+              			}
+          			}
+          			if(!docIDinFile.isEmpty()) {
+          				result.addAll(getWikiById(fs,range[0],docIDinFile,keyWords));
+          			}
+          			if(index >= docID.size()) {
+          				break;
+          			}
+        	    // be sure to read the next line otherwise you'll get an infinite loop
+        	    line = br.readLine();
+        	  }
+        	} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} finally {
+        	  // you should close out the BufferedReader
+        	  try {
+				br.close();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+        	}
+        return result;
+	}
+	
+	public static List<String[]> getWikiById(FileSystem fs, String fileName, List<Integer> docID, String keyWords){
+		//System.out.println("read from "+fileName);
+		BufferedReader br= null;
+		List<String[]> result = new ArrayList<String[]>();
+		 try {
+       Path pt=new Path("hdfs:///user/cs132g2/splitted_wiki_csv/"+fileName);
+       br=new BufferedReader(new InputStreamReader(fs.open(pt)));
+      
+       	  String line;
+       	  line=br.readLine();
+       	  int index = 0;
+       	  while (line != null){
+		    		String docId = "";
+				for(int i = 0; i < line.length(); i++) {
+					if(line.charAt(i) == ',') {
+						docId = line.substring(0, i);
+						break;
+					}
+				}
+				if(index >= docID.size()) {
+					break;
+				}
+				Integer currID = docID.get(index);
+				if(currID == Integer.parseInt(docId)) {
+					//String[] lineArray = line.split(",");
+					//System.out.println(lineArray[0]);
+					
+					String[] info = webInfo(line, keyWords);
+					if(!info[3].equals("")) {
+						result.add(info);
+					}
+					index++;
+				}
+	       	    // be sure to read the next line otherwise you'll get an infinite loop
+	       	    line = br.readLine();
+       	  }
+       	} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} 
+		 finally {
+			 try {
+					br.close();
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+		 }
+        return result;
 	}
 	/*
 	public static List<String> getWikiFileNames(List<String> docID) {
@@ -366,10 +510,11 @@ public class Driver {
         return fileNames;
 	}
 	*/
+	/*
 	public static List<String> getWikiFileNames(JavaSparkContext sc, List<String> docID) {
 		wikiFileNameAccumulator myAccumulator = new wikiFileNameAccumulator();
 		sc.sc().register(myAccumulator,"wikiFileNameAccumulator");
-		JavaRDD<String> rangesRDD = sc.textFile("/user/cs132g2/wiki_ranges.csv");
+		JavaRDD<String> rangesRDD = sc.textFile("/user/cs132g2/splitted_wiki_ranges.csv");
 		//String csvFile = "/class/cs132/wiki_ranges.csv";
 		//String csvFile = "data/wiki_ranges.csv";
 		rangesRDD.foreach(line -> {
@@ -386,30 +531,80 @@ public class Driver {
 		});
 		return new ArrayList<String>(myAccumulator.value());
 	}
-	
-	public static List<String> getDocIDList(JavaRDD<String> docIDRDD){
-		List<String> result = new ArrayList();
+	*/
+	public static List<Integer> getDocIDList(JavaRDD<String> docIDRDD){
+		List<Integer> result = new ArrayList();
 		docIDRDD.collect().forEach(s -> {
-			result.add(s);
+			result.add(Integer.parseInt(s));
 		});
 		return result;
 	}
-	
+	/*
+	public static void callPython(List<String> docIDList) {
+		System.out.println("start");  
+        Process pr;
+		try {
+			String[] args = new String[] { "python", "files:///home/cs132g2/get_wiki_by_id", ""};
+			Iterator<String> it = docIDList.iterator();
+			BufferedReader in;
+			while(it.hasNext()) {
+				args[2] = it.next();
+				pr = Runtime.getRuntime().exec(args);
+				in = new BufferedReader(new  InputStreamReader(pr.getInputStream()));  
+		        String line;  
+		        while ((line = in.readLine()) != null) {  
+		            System.out.println(line);  
+		        }  
+		        in.close();  
+		        pr.waitFor();  
+			}
+	        System.out.println("end"); 
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}  
+          
+        
+	}
+	*/
 	public static void startSearch(JavaSparkContext sc, String searchString) {
 		
 		//String invertedIndexDir = "data/";
 		String invertedIndexDir = "/user/cs132g2/splitted_inverted_index_double/";
 		HashMap<String,HashSet<String>> initialsMap = getInitialsMap(getSearchWords(searchString));
 		HashMap<String,JavaRDD<String>> mapWordToDocID = new HashMap();
-		HashMap<String,List<String>> mapDocIDToWord = new HashMap();
+		//HashMap<String,List<String>> mapDocIDToWord = new HashMap();
 		Iterator<Map.Entry<String, HashSet<String>>> it = initialsMap.entrySet().iterator();
 		while(it.hasNext()) {
 			Map.Entry<String, HashSet<String>> entry = it.next();
 			JavaRDD<String> initialRDD = getRDDofInitial(sc, invertedIndexDir+"invertedindex_"+entry.getKey(), entry.getValue());
-			buildHashMap(sc, mapWordToDocID, mapDocIDToWord, initialRDD);
+			buildHashMap(sc, mapWordToDocID, initialRDD);
 		}
-		JavaRDD<String> resultDocIDRDD = booleanSearch(mapWordToDocID,searchString).cache();
-		List<String> docIDList = getDocIDList(resultDocIDRDD);
+		JavaRDD<String> resultDocIDRDD = booleanSearch(mapWordToDocID,searchString);
+		if(resultDocIDRDD==null||resultDocIDRDD.isEmpty()) {
+			System.out.println("nothing is found in the wiki pages");
+		}
+		else {
+			List<Integer> docIDList = getDocIDList(resultDocIDRDD);
+			System.out.println("rdd done!");
+			List<String[]> result = getWikiContent(sc,docIDList,getKeyWords(searchString));
+			System.out.println("read wiki data done!");
+			Iterator<String[]> iterator = result.iterator();
+			while(iterator.hasNext()) {
+				String[] line = iterator.next();
+				System.out.print("docID:"+line[0]+",");
+				System.out.print("URL:"+line[1]+",");
+				System.out.print("Title:"+line[2]+",");
+				System.out.print("Content:"+line[3]);
+				System.out.println("");
+			}
+		}
+		
+		//callPython(docIDList);
+		/*
 		List<String> wikiFileNames = getWikiFileNames(sc,docIDList);
 		String filesPwd = getWikiFilesPwd(wikiFileNames);
 		JavaRDD<String> tmp = sc.textFile(filesPwd);
@@ -433,7 +628,7 @@ public class Driver {
 			JavaPairRDD<String, Tuple2<String, String>> searchedArticles = articles.join(resultDocIDRDD.mapToPair(s -> {
 				return new Tuple2<String,String>(s,"");
 			}));
-
+			
 			JavaRDD<String> resRDD = searchedArticles.map(tuple -> {
 				String content = tuple._2._1;
 				StringBuilder sb = new StringBuilder();
@@ -450,6 +645,7 @@ public class Driver {
 				return info;
 			});
 			resRDD.saveAsTextFile("/user/cs132g2/output_wiki_search");
+			*/
 	}
 }
 
